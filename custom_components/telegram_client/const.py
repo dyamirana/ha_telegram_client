@@ -13,7 +13,7 @@ SCAN_INTERVAL: Final = timedelta(seconds=10)
 CLIENT_PARAMS: Final = {
     "device_model": "Home Assistant",
     "system_version": ha_version,
-    "app_version": "1.0.0",
+    "app_version": "1.0.2",
 }
 # endregion
 
