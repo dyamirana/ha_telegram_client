@@ -8,6 +8,7 @@ from typing import Any
 from homeassistant.helpers import config_validation as cv
 
 from .const import (
+    LOGGER,
     CHAT_FILTER_MODE_MANUAL_BLACKLIST,
     CHAT_FILTER_MODE_MANUAL_WHITELIST,
     CHAT_FILTER_MODE_TELEGRAM_FOLDER,
@@ -65,11 +66,27 @@ async def get_telegram_folder_options(client: Any) -> dict[str, str]:
     folders: dict[str, str] = {}
     for dialog_filter in await client(GetDialogFiltersRequest()):
         folder_id = getattr(dialog_filter, "id", None)
-        title = getattr(dialog_filter, "title", None)
+        title = _telegram_folder_title(dialog_filter)
         if folder_id in (None, 0) or not title:
             continue
         folders[str(folder_id)] = f"{title} ({folder_id})"
     return folders
+
+
+def _telegram_folder_title(dialog_filter: Any) -> str | None:
+    """Return a human readable Telegram folder title."""
+    title = getattr(dialog_filter, "title", None)
+    if title is None:
+        return None
+    if isinstance(title, str):
+        return title
+    # Some Telethon versions expose rich text titles as objects. Prefer their
+    # plain text when available instead of showing an object repr in the UI.
+    text = getattr(title, "text", None)
+    if isinstance(text, str):
+        return text
+    LOGGER.debug("Unsupported Telegram folder title type: %s", type(title))
+    return str(title)
 
 
 def get_folder_id(options: dict[str, Any]) -> int | None:

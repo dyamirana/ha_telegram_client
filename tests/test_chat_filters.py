@@ -79,8 +79,10 @@ def test_get_telegram_folder_options(monkeypatch):
             return [
                 SimpleNamespace(id=0, title="Default"),
                 SimpleNamespace(id=2, title="Home Assistant"),
+                SimpleNamespace(id=3, title=SimpleNamespace(text="Alerts")),
             ]
 
     assert asyncio.run(get_telegram_folder_options(Client())) == {
-        "2": "Home Assistant (2)"
+        "2": "Home Assistant (2)",
+        "3": "Alerts (3)",
     }
