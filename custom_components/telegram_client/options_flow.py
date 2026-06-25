@@ -7,6 +7,8 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry, ConfigFlowResult, OptionsFlow
 
 from .const import (
+    DOMAIN,
+    LOGGER,
     EVENT_CALLBACK_QUERY,
     EVENT_CHAT_ACTION,
     EVENT_INLINE_QUERY,
@@ -151,11 +153,15 @@ class TelegramClientOptionsFlow(OptionsFlow):
         """Load Telegram folders for the new message options dropdown."""
         coordinator = getattr(self.config_entry, "runtime_data", None)
         if coordinator is None:
+            coordinator = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id)
+        if coordinator is None:
+            LOGGER.debug("Telegram folder options are unavailable: coordinator is not ready")
             return {}
         try:
             await coordinator.async_client_start()
             return await get_telegram_folder_options(coordinator.client)
-        except Exception:  # noqa: BLE001
+        except Exception as err:  # noqa: BLE001
+            LOGGER.debug("Unable to load Telegram folder options", exc_info=err)
             return {}
 
     async def async_step_message_edited(
