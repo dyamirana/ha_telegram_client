@@ -752,19 +752,30 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
     def _schedule_folder_refresh(self, options: dict[str, Any]) -> None:
         """Schedule Telegram folder chat cache refresh."""
         interval = int(options.get(OPTION_FOLDER_REFRESH_INTERVAL) or DEFAULT_FOLDER_REFRESH_INTERVAL)
-        self._hass.async_create_task(self._refresh_folder_chat_ids(options))
+        self._queue_folder_refresh(options)
         self._folder_refresh_unsub = async_track_time_interval(
             self._hass,
-            lambda now: self._hass.async_create_task(self._refresh_folder_chat_ids(options)),
+            lambda now: self._queue_folder_refresh(options),
             timedelta(seconds=interval),
         )
+
+    def _queue_folder_refresh(self, options: dict[str, Any]) -> None:
+        """Queue Telegram folder chat cache refresh from any thread."""
+        self._hass.add_job(self._refresh_folder_chat_ids, options)
 
     async def _refresh_folder_chat_ids(self, options: dict[str, Any]) -> None:
         """Refresh cached chat IDs for Telegram folder filtering."""
         folder_id = get_folder_id(options)
         if folder_id is None:
             return
-        chat_ids = await get_folder_chat_ids(self._client, folder_id)
+        try:
+            await self.async_client_start()
+            chat_ids = await get_folder_chat_ids(self._client, folder_id)
+        except (ConnectionError, ConfigEntryAuthFailed) as err:
+            LOGGER.warning(
+                "Unable to refresh Telegram folder %s chats: %s", folder_id, err
+            )
+            return
         self._folder_chat_ids = chat_ids
         LOGGER.debug("Loaded %s chats from Telegram folder %s: %s", len(chat_ids), folder_id, sorted(chat_ids))
         if not chat_ids:
