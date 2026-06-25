@@ -2,10 +2,13 @@
 
 from types import SimpleNamespace
 
+import asyncio
+
 import pytest
 
 from custom_components.telegram_client.chat_filters import (
     get_folder_chat_ids,
+    get_telegram_folder_options,
     migrate_chat_filter_options,
     parse_chat_ids_csv,
 )
@@ -49,6 +52,35 @@ class _Client:
             yield SimpleNamespace(id=dialog_id)
 
 
-@pytest.mark.asyncio
-async def test_folder_chat_id_loading():
-    assert await get_folder_chat_ids(_Client(), 7) == {1, -1001234567890}
+def test_folder_chat_id_loading():
+    assert asyncio.run(get_folder_chat_ids(_Client(), 7)) == {1, -1001234567890}
+
+
+def test_get_telegram_folder_options(monkeypatch):
+    import sys
+    import types
+
+    class GetDialogFiltersRequest:
+        pass
+
+    telethon = types.ModuleType("telethon")
+    tl = types.ModuleType("telethon.tl")
+    functions = types.ModuleType("telethon.tl.functions")
+    messages = types.ModuleType("telethon.tl.functions.messages")
+    messages.GetDialogFiltersRequest = GetDialogFiltersRequest
+    monkeypatch.setitem(sys.modules, "telethon", telethon)
+    monkeypatch.setitem(sys.modules, "telethon.tl", tl)
+    monkeypatch.setitem(sys.modules, "telethon.tl.functions", functions)
+    monkeypatch.setitem(sys.modules, "telethon.tl.functions.messages", messages)
+
+    class Client:
+        async def __call__(self, request):
+            assert isinstance(request, GetDialogFiltersRequest)
+            return [
+                SimpleNamespace(id=0, title="Default"),
+                SimpleNamespace(id=2, title="Home Assistant"),
+            ]
+
+    assert asyncio.run(get_telegram_folder_options(Client())) == {
+        "2": "Home Assistant (2)"
+    }

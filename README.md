@@ -284,7 +284,7 @@ For the `New message` event, the options flow supports three chat filter modes:
 
 * `manual_whitelist` – only chats listed in `Chats` are accepted.
 * `manual_blacklist` – chats listed in `Chats` are ignored.
-* `telegram_folder` – chats are loaded from a Telegram folder ID and treated as a whitelist.
+* `telegram_folder` – chats are loaded from a selected Telegram folder and treated as a whitelist.
 
 `Chats` accepts comma-separated Telegram chat IDs, for example:
 
@@ -292,7 +292,7 @@ For the `New message` event, the options flow supports three chat filter modes:
 2074448263,-1001234567890
 ```
 
-When `telegram_folder` is selected, enter the Telegram folder ID. The integration loads chat IDs with Telethon `iter_dialogs(folder=...)`, caches them, and refreshes the folder periodically (default: 60 seconds). When you add a chat to that Telegram folder, new messages from that chat are accepted after the next refresh without manually copying chat IDs into Home Assistant.
+When `telegram_folder` is selected, the options form tries to load your Telegram folders and shows them as a dropdown. If folders cannot be loaded while configuring, the same field falls back to a manual folder ID input. The integration loads chat IDs with Telethon `iter_dialogs(folder=...)`, caches them, and refreshes the folder periodically (default: 60 seconds). When you add a chat to that Telegram folder, new messages from that chat are accepted after the next refresh without manually copying chat IDs into Home Assistant.
 
 The stable Home Assistant event type for new messages is:
 

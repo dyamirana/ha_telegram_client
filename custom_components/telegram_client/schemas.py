@@ -164,9 +164,14 @@ def step_events_data_schema(data):
     )
 
 
-def step_new_message_data_schema(data):
+def step_new_message_data_schema(data, folder_options: dict[str, str] | None = None):
     """Handle new message step data validation."""
     data = migrate_chat_filter_options(data)
+    current_folder_id = data.get(OPTION_TELEGRAM_FOLDER_ID)
+    if folder_options and current_folder_id not in (None, ""):
+        folder_options = dict(folder_options)
+        folder_options.setdefault(str(current_folder_id), str(current_folder_id))
+    telegram_folder_field = vol.In(folder_options) if folder_options else cv.string
     return vol.Schema(
         {
             vol.Required(OPTION_INCOMING, default=data.get(OPTION_INCOMING, True)): cv.boolean,
@@ -180,7 +185,7 @@ def step_new_message_data_schema(data):
             vol.Optional(
                 OPTION_TELEGRAM_FOLDER_ID,
                 description={KEY_SUGGESTED_VALUE: data.get(OPTION_TELEGRAM_FOLDER_ID, "")},
-            ): cv.string,
+            ): telegram_folder_field,
             vol.Optional(
                 OPTION_FOLDER_REFRESH_INTERVAL,
                 default=data.get(OPTION_FOLDER_REFRESH_INTERVAL, DEFAULT_FOLDER_REFRESH_INTERVAL),

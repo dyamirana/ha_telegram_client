@@ -22,11 +22,12 @@ from .const import (
     OPTION_EVENTS,
     OPTION_FORWARDS,
     OPTION_TELEGRAM_FOLDER_ID,
+    OPTION_TELEGRAM_FOLDER_NAME,
     OPTION_INCOMING,
     OPTION_OUTGOING,
     STRING_FORWARDS_ONLY_FORWARDS,
 )
-from .chat_filters import parse_chat_ids_csv
+from .chat_filters import get_telegram_folder_options, parse_chat_ids_csv
 from .schemas import (
     step_callback_query_data_schema,
     step_chat_action_data_schema,
@@ -52,6 +53,7 @@ class TelegramClientOptionsFlow(OptionsFlow):
     _inline_query_options: dict[str, str | bool]
     _chat_action_options: dict[str, str | bool]
     _user_update_options: dict[str, str | bool]
+    _telegram_folder_options: dict[str, str]
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Handle Telegram client entry options flow initialization."""
@@ -71,6 +73,7 @@ class TelegramClientOptionsFlow(OptionsFlow):
         self._inline_query_options = config_entry.options.get(EVENT_INLINE_QUERY, {})
         self._chat_action_options = config_entry.options.get(EVENT_CHAT_ACTION, {})
         self._user_update_options = config_entry.options.get(EVENT_USER_UPDATE, {})
+        self._telegram_folder_options = {}
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -92,6 +95,7 @@ class TelegramClientOptionsFlow(OptionsFlow):
     ) -> ConfigFlowResult:
         """Handle input of new message event parameters step."""
         errors: dict[str, str] = {}
+        self._telegram_folder_options = await self._async_get_telegram_folder_options()
         if not self._events_options.get(EVENT_NEW_MESSAGE):
             return await self.async_step_message_edited()
         if user_input is not None:
@@ -124,6 +128,11 @@ class TelegramClientOptionsFlow(OptionsFlow):
                 except ValueError:
                     errors[OPTION_TELEGRAM_FOLDER_ID] = "invalid_folder_id"
             if not errors:
+                user_input = dict(user_input)
+                if user_input.get(OPTION_TELEGRAM_FOLDER_ID):
+                    user_input[OPTION_TELEGRAM_FOLDER_NAME] = self._telegram_folder_options.get(
+                        str(user_input[OPTION_TELEGRAM_FOLDER_ID])
+                    )
                 self._new_message_options = user_input
                 return await self.async_step_message_edited()
 
@@ -132,10 +141,22 @@ class TelegramClientOptionsFlow(OptionsFlow):
             data_schema=step_new_message_data_schema(
                 self.config_entry.options.get(EVENT_NEW_MESSAGE, {})
                 if user_input is None
-                else user_input
+                else user_input,
+                self._telegram_folder_options,
             ),
             errors=errors,
         )
+
+    async def _async_get_telegram_folder_options(self) -> dict[str, str]:
+        """Load Telegram folders for the new message options dropdown."""
+        coordinator = getattr(self.config_entry, "runtime_data", None)
+        if coordinator is None:
+            return {}
+        try:
+            await coordinator.async_client_start()
+            return await get_telegram_folder_options(coordinator.client)
+        except Exception:  # noqa: BLE001
+            return {}
 
     async def async_step_message_edited(
         self, user_input: dict[str, Any] | None = None

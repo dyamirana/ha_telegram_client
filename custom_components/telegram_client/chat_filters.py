@@ -58,6 +58,20 @@ async def get_folder_chat_ids(client: Any, folder_id: int) -> set[int]:
     return chat_ids
 
 
+async def get_telegram_folder_options(client: Any) -> dict[str, str]:
+    """Return Telegram folder IDs and titles suitable for an options dropdown."""
+    from telethon.tl.functions.messages import GetDialogFiltersRequest
+
+    folders: dict[str, str] = {}
+    for dialog_filter in await client(GetDialogFiltersRequest()):
+        folder_id = getattr(dialog_filter, "id", None)
+        title = getattr(dialog_filter, "title", None)
+        if folder_id in (None, 0) or not title:
+            continue
+        folders[str(folder_id)] = f"{title} ({folder_id})"
+    return folders
+
+
 def get_folder_id(options: dict[str, Any]) -> int | None:
     """Return configured Telegram folder ID, if any."""
     folder_id = options.get(OPTION_TELEGRAM_FOLDER_ID)

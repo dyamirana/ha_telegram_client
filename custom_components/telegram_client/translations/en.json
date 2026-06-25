@@ -89,7 +89,7 @@
           "forwards": "Forwards",
           "pattern": "Pattern",
           "chat_filter_mode": "Chat filter mode",
-          "telegram_folder_id": "Telegram folder ID",
+          "telegram_folder_id": "Telegram folder",
           "folder_refresh_interval": "Folder refresh interval (seconds)"
         },
         "title": "New message event",
