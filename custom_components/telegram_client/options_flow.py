@@ -57,7 +57,7 @@ class TelegramClientOptionsFlow(OptionsFlow):
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Handle Telegram client entry options flow initialization."""
-        self.config_entry = config_entry
+        self._config_entry = config_entry
         self._events_options = config_entry.options.get(OPTION_EVENTS, {})
         self._new_message_options = config_entry.options.get(EVENT_NEW_MESSAGE, {})
         self._message_edited_options = config_entry.options.get(
