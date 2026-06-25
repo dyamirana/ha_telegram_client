@@ -87,7 +87,10 @@
           "outgoing": "Outgoing",
           "from_users": "From users",
           "forwards": "Forwards",
-          "pattern": "Pattern"
+          "pattern": "Pattern",
+          "chat_filter_mode": "Chat filter mode",
+          "telegram_folder_id": "Telegram folder ID",
+          "folder_refresh_interval": "Folder refresh interval (seconds)"
         },
         "title": "New message event",
         "description": "Here you can set parameters for new message events."
@@ -333,6 +336,14 @@
           "description": "Deletes message from everyone."
         }
       }
+    }
+  },
+  "device_automation": {
+    "trigger_type": {
+      "new_message": "New Telegram message"
+    },
+    "trigger_subtype": {
+      "new_message": "New Telegram message"
     }
   }
 }
