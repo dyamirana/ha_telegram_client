@@ -56,7 +56,7 @@ def test_folder_chat_id_loading():
     assert asyncio.run(get_folder_chat_ids(_Client(), 7)) == {1, -1001234567890}
 
 
-def test_get_telegram_folder_options(monkeypatch):
+def test_get_telegram_folder_options_from_iterable_response(monkeypatch):
     import sys
     import types
 
@@ -85,4 +85,36 @@ def test_get_telegram_folder_options(monkeypatch):
     assert asyncio.run(get_telegram_folder_options(Client())) == {
         "2": "Home Assistant (2)",
         "3": "Alerts (3)",
+    }
+
+
+def test_get_telegram_folder_options_from_dialog_filters_response(monkeypatch):
+    import sys
+    import types
+
+    class GetDialogFiltersRequest:
+        pass
+
+    telethon = types.ModuleType("telethon")
+    tl = types.ModuleType("telethon.tl")
+    functions = types.ModuleType("telethon.tl.functions")
+    messages = types.ModuleType("telethon.tl.functions.messages")
+    messages.GetDialogFiltersRequest = GetDialogFiltersRequest
+    monkeypatch.setitem(sys.modules, "telethon", telethon)
+    monkeypatch.setitem(sys.modules, "telethon.tl", tl)
+    monkeypatch.setitem(sys.modules, "telethon.tl.functions", functions)
+    monkeypatch.setitem(sys.modules, "telethon.tl.functions.messages", messages)
+
+    class Client:
+        async def __call__(self, request):
+            assert isinstance(request, GetDialogFiltersRequest)
+            return SimpleNamespace(
+                filters=[
+                    SimpleNamespace(id=0, title="Default"),
+                    SimpleNamespace(id=4, title="Security"),
+                ]
+            )
+
+    assert asyncio.run(get_telegram_folder_options(Client())) == {
+        "4": "Security (4)",
     }

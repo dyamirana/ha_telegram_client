@@ -64,13 +64,23 @@ async def get_telegram_folder_options(client: Any) -> dict[str, str]:
     from telethon.tl.functions.messages import GetDialogFiltersRequest
 
     folders: dict[str, str] = {}
-    for dialog_filter in await client(GetDialogFiltersRequest()):
+    response = await client(GetDialogFiltersRequest())
+    for dialog_filter in _iter_telegram_dialog_filters(response):
         folder_id = getattr(dialog_filter, "id", None)
         title = _telegram_folder_title(dialog_filter)
         if folder_id in (None, 0) or not title:
             continue
         folders[str(folder_id)] = f"{title} ({folder_id})"
     return folders
+
+
+def _iter_telegram_dialog_filters(response: Any):
+    """Iterate dialog filters from Telethon response variants."""
+    filters = getattr(response, "filters", None)
+    if filters is not None:
+        yield from filters
+        return
+    yield from response
 
 
 def _telegram_folder_title(dialog_filter: Any) -> str | None:
