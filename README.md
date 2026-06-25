@@ -278,3 +278,40 @@ mode: restart
 ## Side note
 
 This integration is based on Telethon library. It has complete documentation on all [methods](https://docs.telethon.dev/en/stable/modules/client.html#telethon.client.messages.MessageMethods) and [events](https://docs.telethon.dev/en/stable/modules/events.html) it can handle. So in case you are not sure what that or other method or event field is for, you can refer to official documentation.
+### New message chat filtering
+
+For the `New message` event, the options flow supports three chat filter modes:
+
+* `manual_whitelist` – only chats listed in `Chats` are accepted.
+* `manual_blacklist` – chats listed in `Chats` are ignored.
+* `telegram_folder` – chats are loaded from a Telegram folder ID and treated as a whitelist.
+
+`Chats` accepts comma-separated Telegram chat IDs, for example:
+
+```text
+2074448263,-1001234567890
+```
+
+When `telegram_folder` is selected, enter the Telegram folder ID. The integration loads chat IDs with Telethon `iter_dialogs(folder=...)`, caches them, and refreshes the folder periodically (default: 60 seconds). When you add a chat to that Telegram folder, new messages from that chat are accepted after the next refresh without manually copying chat IDs into Home Assistant.
+
+The stable Home Assistant event type for new messages is:
+
+```text
+telegram_client_new_message
+```
+
+The event payload includes normalized fields such as `chat_id`, `chat_title`, `sender_id`, `sender_username`, `sender_first_name`, `sender_last_name`, `message_id`, `message`, `raw_text`, `date`, `is_group`, `is_channel`, `is_private`, `outgoing`, `forward`, and, for folder-filtered messages, `folder_id` / `folder_name`.
+
+### Automation UI trigger
+
+The integration exposes a device automation trigger named **New Telegram message**. Optional trigger filters are available in YAML as `chat_id`, `sender_id`, `message_contains`, and `folder_id`.
+
+If your Home Assistant version does not show the device trigger, use a manual Event trigger:
+
+```yaml
+trigger:
+  - platform: event
+    event_type: telegram_client_new_message
+    event_data:
+      chat_id: -1001234567890
+```

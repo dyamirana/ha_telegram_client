@@ -1,6 +1,7 @@
 """Telegram client data update coordinator."""
 
 import asyncio
+from datetime import timedelta
 from collections.abc import Coroutine
 from pathlib import Path
 import re
@@ -20,6 +21,7 @@ from homeassistant.exceptions import (
     IntegrationError,
 )
 from homeassistant.helpers import config_validation as cv, device_registry as dr
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import STORAGE_DIR
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
@@ -31,6 +33,8 @@ from .const import (
     CONF_CLIENT_TYPE,
     CONF_PHONE,
     CONF_TOKEN,
+    CHAT_FILTER_MODE_TELEGRAM_FOLDER,
+    DEFAULT_FOLDER_REFRESH_INTERVAL,
     DOMAIN,
     EVENT_CALLBACK_QUERY,
     EVENT_CHAT_ACTION,
@@ -55,6 +59,7 @@ from .const import (
     KEY_CHAT,
     KEY_CHAT_ID,
     KEY_CHAT_INSTANCE,
+    KEY_CHAT_TITLE,
     KEY_CONFIG_ENTRY_ID,
     KEY_CONTACT,
     KEY_CONTENTS,
@@ -65,6 +70,9 @@ from .const import (
     KEY_DELETED_IDS,
     KEY_DOCUMENT,
     KEY_ENTITY,
+    KEY_FOLDER_ID,
+    KEY_FOLDER_NAME,
+    KEY_FORWARD,
     KEY_GEO,
     KEY_ID,
     KEY_INBOX,
@@ -97,7 +105,11 @@ from .const import (
     KEY_RECORDING,
     KEY_ROUND,
     KEY_SENDER,
+    KEY_RAW_TEXT,
+    KEY_SENDER_FIRST_NAME,
     KEY_SENDER_ID,
+    KEY_SENDER_LAST_NAME,
+    KEY_SENDER_USERNAME,
     KEY_STATUS,
     KEY_STICKER,
     KEY_TYPING,
@@ -119,15 +131,19 @@ from .const import (
     LOGGER,
     OPTION_BLACKLIST_CHATS,
     OPTION_BLACKLIST_USERS,
+    OPTION_CHAT_FILTER_MODE,
     OPTION_CHATS,
     OPTION_DATA,
     OPTION_EVENTS,
     OPTION_FORWARDS,
     OPTION_FROM_USERS,
+    OPTION_FOLDER_REFRESH_INTERVAL,
     OPTION_INBOX,
     OPTION_INCOMING,
     OPTION_OUTGOING,
     OPTION_PATTERN,
+    OPTION_TELEGRAM_FOLDER_ID,
+    OPTION_TELEGRAM_FOLDER_NAME,
     OPTION_USERS,
     SCAN_INTERVAL,
     SENSOR_FIRST_NAME,
@@ -138,6 +154,7 @@ from .const import (
     SENSOR_RESTRICTED,
     SENSOR_USERNAME,
 )
+from .chat_filters import get_folder_chat_ids, get_folder_id, get_manual_chat_filter, migrate_chat_filter_options
 
 type TelegramClientEntryConfigEntry = ConfigEntry[TelegramClientCoordinator]
 
@@ -192,6 +209,8 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
         )
         hass.data.setdefault(DOMAIN, {})
         hass.data[DOMAIN][entry.entry_id] = self
+        self._folder_chat_ids: set[int] = set()
+        self._folder_refresh_unsub = None
         self._subscribe_listeners(entry)
 
     @property
@@ -242,22 +261,54 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
     @callback
     async def on_new_message(self, event: events.newmessage.NewMessage.Event):
         """Handle new message event propagation."""
+        options = migrate_chat_filter_options(self._entry.options.get(EVENT_NEW_MESSAGE, {}))
+        folder_id = get_folder_id(options)
+        if options.get(OPTION_CHAT_FILTER_MODE) == CHAT_FILTER_MODE_TELEGRAM_FOLDER:
+            if event.chat_id not in self._folder_chat_ids:
+                return
         self._hass.bus.async_fire(
             f"{DOMAIN}_{EVENT_NEW_MESSAGE}",
-            self._event_to_dict(
-                event,
-                [
-                    KEY_CHAT,
-                    KEY_CHAT_ID,
-                    KEY_INPUT_CHAT,
-                    KEY_IS_CHANNEL,
-                    KEY_IS_GROUP,
-                    KEY_IS_PRIVATE,
-                    KEY_MESSAGE,
-                    KEY_PATTERN_MATCH,
-                ],
-            ),
+            await self._new_message_event_data(event, folder_id),
         )
+
+
+    async def _new_message_event_data(self, event, folder_id: int | None) -> dict[str, Any]:
+        """Build normalized Home Assistant event payload for a new message."""
+        data = self._event_to_dict(
+            event,
+            [
+                KEY_CHAT,
+                KEY_CHAT_ID,
+                KEY_INPUT_CHAT,
+                KEY_IS_CHANNEL,
+                KEY_IS_GROUP,
+                KEY_IS_PRIVATE,
+                KEY_MESSAGE,
+                KEY_PATTERN_MATCH,
+            ],
+        )
+        chat = await event.get_chat() if hasattr(event, "get_chat") else None
+        sender = await event.get_sender() if hasattr(event, "get_sender") else None
+        message = getattr(event, "message", None)
+        data.update(
+            {
+                KEY_CHAT_TITLE: getattr(chat, "title", None) or getattr(chat, "first_name", None),
+                KEY_SENDER_ID: getattr(event, "sender_id", None),
+                KEY_SENDER_USERNAME: getattr(sender, "username", None),
+                KEY_SENDER_FIRST_NAME: getattr(sender, "first_name", None),
+                KEY_SENDER_LAST_NAME: getattr(sender, "last_name", None),
+                KEY_MESSAGE_ID: getattr(message, "id", None),
+                KEY_MESSAGE: getattr(event, "raw_text", None),
+                KEY_RAW_TEXT: getattr(event, "raw_text", None),
+                "date": getattr(getattr(message, "date", None), "isoformat", lambda: None)(),
+                OPTION_OUTGOING: getattr(event, "out", None),
+                KEY_FORWARD: getattr(message, "fwd_from", None) is not None,
+            }
+        )
+        if folder_id is not None:
+            data[KEY_FOLDER_ID] = folder_id
+            data[KEY_FOLDER_NAME] = self._entry.options.get(EVENT_NEW_MESSAGE, {}).get(OPTION_TELEGRAM_FOLDER_NAME)
+        return data
 
     @callback
     async def on_message_edited(self, event: events.messageedited.MessageEdited.Event):
@@ -345,7 +396,7 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
                 KEY_PATTERN_MATCH,
                 KEY_QUERY,
                 KEY_SENDER,
-                KEY_SENDER_ID,
+                KEY_RAW_TEXT,
                 KEY_VIA_INLINE,
             ],
         )
@@ -365,7 +416,6 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
                 [
                     KEY_CHAT,
                     KEY_CHAT_ID,
-                    KEY_GEO,
                     KEY_ID,
                     KEY_INPUT_CHAT,
                     KEY_INPUT_SENDER,
@@ -431,7 +481,6 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
                     KEY_CHAT_ID,
                     KEY_CONTACT,
                     KEY_DOCUMENT,
-                    KEY_GEO,
                     KEY_INPUT_CHAT,
                     KEY_INPUT_SENDER,
                     KEY_INPUT_USER,
@@ -446,7 +495,6 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
                     KEY_RECORDING,
                     KEY_ROUND,
                     KEY_SENDER,
-                    KEY_SENDER_ID,
                     KEY_STATUS,
                     KEY_STICKER,
                     KEY_TYPING,
@@ -596,13 +644,19 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
         """Handle Telegram client events listeners subscription."""
         events_config = entry.options.get(OPTION_EVENTS, {})
         if events_config.get(EVENT_NEW_MESSAGE):
-            options = entry.options.get(EVENT_NEW_MESSAGE, {})
+            options = migrate_chat_filter_options(entry.options.get(EVENT_NEW_MESSAGE, {}))
+            chats, blacklist_chats = get_manual_chat_filter(options)
+            LOGGER.debug(
+                "New message chat filter mode=%s chats=%s blacklist=%s",
+                options.get(OPTION_CHAT_FILTER_MODE),
+                chats,
+                blacklist_chats,
+            )
             self._client.add_event_handler(
                 self.on_new_message,
                 events.NewMessage(
-                    chats=list(map(int, cv.ensure_list_csv(options.get(OPTION_CHATS))))
-                    or None,
-                    blacklist_chats=options.get(OPTION_BLACKLIST_CHATS),
+                    chats=chats,
+                    blacklist_chats=blacklist_chats,
                     incoming=options.get(OPTION_INCOMING),
                     outgoing=options.get(OPTION_OUTGOING),
                     from_users=cv.ensure_list_csv(options.get(OPTION_FROM_USERS))
@@ -611,6 +665,8 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
                     pattern=options.get(OPTION_PATTERN),
                 ),
             )
+            if options.get(OPTION_CHAT_FILTER_MODE) == CHAT_FILTER_MODE_TELEGRAM_FOLDER:
+                self._schedule_folder_refresh(options)
         if events_config.get(EVENT_MESSAGE_EDITED):
             options = entry.options.get(EVENT_MESSAGE_EDITED, {})
             self._client.add_event_handler(
@@ -692,8 +748,33 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
                 ),
             )
 
+
+    def _schedule_folder_refresh(self, options: dict[str, Any]) -> None:
+        """Schedule Telegram folder chat cache refresh."""
+        interval = int(options.get(OPTION_FOLDER_REFRESH_INTERVAL) or DEFAULT_FOLDER_REFRESH_INTERVAL)
+        self._hass.async_create_task(self._refresh_folder_chat_ids(options))
+        self._folder_refresh_unsub = async_track_time_interval(
+            self._hass,
+            lambda now: self._hass.async_create_task(self._refresh_folder_chat_ids(options)),
+            timedelta(seconds=interval),
+        )
+
+    async def _refresh_folder_chat_ids(self, options: dict[str, Any]) -> None:
+        """Refresh cached chat IDs for Telegram folder filtering."""
+        folder_id = get_folder_id(options)
+        if folder_id is None:
+            return
+        chat_ids = await get_folder_chat_ids(self._client, folder_id)
+        self._folder_chat_ids = chat_ids
+        LOGGER.debug("Loaded %s chats from Telegram folder %s: %s", len(chat_ids), folder_id, sorted(chat_ids))
+        if not chat_ids:
+            LOGGER.warning("Telegram folder %s is empty", folder_id)
+
     def _unsubscribe_listeners(self, entry: ConfigEntry) -> None:
         """Handle Telegram client events listeners unsubscription."""
+        if self._folder_refresh_unsub:
+            self._folder_refresh_unsub()
+            self._folder_refresh_unsub = None
         self._client.remove_event_handler(self.on_new_message, events.NewMessage)
         self._client.remove_event_handler(self.on_message_edited, events.MessageEdited)
         self._client.remove_event_handler(self.on_message_read, events.MessageRead)
@@ -710,6 +791,8 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
     ):
         """Handle Telegram client events listeners re-subscription."""
         self._unsubscribe_listeners(entry)
+        self._folder_chat_ids: set[int] = set()
+        self._folder_refresh_unsub = None
         self._subscribe_listeners(entry)
 
     def _tlobject_to_dict(self, data):

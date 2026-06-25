@@ -16,12 +16,17 @@ from .const import (
     EVENT_NEW_MESSAGE,
     EVENT_USER_UPDATE,
     KEY_BASE,
+    CHAT_FILTER_MODE_TELEGRAM_FOLDER,
+    OPTION_CHAT_FILTER_MODE,
+    OPTION_CHATS,
     OPTION_EVENTS,
     OPTION_FORWARDS,
+    OPTION_TELEGRAM_FOLDER_ID,
     OPTION_INCOMING,
     OPTION_OUTGOING,
     STRING_FORWARDS_ONLY_FORWARDS,
 )
+from .chat_filters import parse_chat_ids_csv
 from .schemas import (
     step_callback_query_data_schema,
     step_chat_action_data_schema,
@@ -104,6 +109,20 @@ class TelegramClientOptionsFlow(OptionsFlow):
                 errors[OPTION_FORWARDS] = (
                     f"You can't select Forwards='{STRING_FORWARDS_ONLY_FORWARDS}' if you selected 'Incoming' or 'Outgoing'"
                 )
+            try:
+                parse_chat_ids_csv(user_input.get(OPTION_CHATS))
+            except ValueError:
+                errors[OPTION_CHATS] = "invalid_chat_id"
+            if (
+                user_input.get(OPTION_CHAT_FILTER_MODE) == CHAT_FILTER_MODE_TELEGRAM_FOLDER
+                and not user_input.get(OPTION_TELEGRAM_FOLDER_ID)
+            ):
+                errors[OPTION_TELEGRAM_FOLDER_ID] = "required"
+            if user_input.get(OPTION_TELEGRAM_FOLDER_ID):
+                try:
+                    int(user_input[OPTION_TELEGRAM_FOLDER_ID])
+                except ValueError:
+                    errors[OPTION_TELEGRAM_FOLDER_ID] = "invalid_folder_id"
             if not errors:
                 self._new_message_options = user_input
                 return await self.async_step_message_edited()
