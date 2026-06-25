@@ -6,6 +6,9 @@ from homeassistant.const import CONF_PASSWORD
 from homeassistant.helpers import config_validation as cv, selector
 
 from .const import (
+    CHAT_FILTER_MODES,
+    CHAT_FILTER_MODE_MANUAL_WHITELIST,
+    DEFAULT_FOLDER_REFRESH_INTERVAL,
     CLIENT_TYPE_BOT,
     CLIENT_TYPE_USER,
     CONF_API_HASH,
@@ -47,15 +50,18 @@ from .const import (
     KEY_CONFIG_ENTRY_ID,
     KEY_SUGGESTED_VALUE,
     OPTION_BLACKLIST_CHATS,
+    OPTION_CHAT_FILTER_MODE,
     OPTION_BLACKLIST_USERS,
     OPTION_CHATS,
     OPTION_DATA,
     OPTION_FORWARDS,
     OPTION_FROM_USERS,
+    OPTION_FOLDER_REFRESH_INTERVAL,
     OPTION_INBOX,
     OPTION_INCOMING,
     OPTION_OUTGOING,
     OPTION_PATTERN,
+    OPTION_TELEGRAM_FOLDER_ID,
     OPTION_USERS,
     STRING_BOT,
     STRING_FORWARDS_DEFAULT,
@@ -63,6 +69,7 @@ from .const import (
     STRING_FORWARDS_ONLY_FORWARDS,
     STRING_USER,
 )
+from .chat_filters import migrate_chat_filter_options
 from .validators import (
     allow_keyboard_if_file_not_defined,
     allow_keyboard_resize_if_keyboard_defined,
@@ -157,38 +164,34 @@ def step_events_data_schema(data):
     )
 
 
-def step_new_message_data_schema(data):
+def step_new_message_data_schema(data, folder_options: dict[str, str] | None = None):
     """Handle new message step data validation."""
+    data = migrate_chat_filter_options(data)
+    current_folder_id = data.get(OPTION_TELEGRAM_FOLDER_ID)
+    if folder_options and current_folder_id not in (None, ""):
+        folder_options = dict(folder_options)
+        folder_options.setdefault(str(current_folder_id), str(current_folder_id))
+    telegram_folder_field = vol.In(folder_options) if folder_options else cv.string
     return vol.Schema(
         {
+            vol.Required(OPTION_INCOMING, default=data.get(OPTION_INCOMING, True)): cv.boolean,
+            vol.Required(OPTION_OUTGOING, default=data.get(OPTION_OUTGOING, True)): cv.boolean,
+            vol.Required(OPTION_FORWARDS, default=data.get(OPTION_FORWARDS)): vol.In(FORWARDS_OPTIONS),
             vol.Required(
-                OPTION_INCOMING,
-                default=data.get(OPTION_INCOMING, True),
-            ): cv.boolean,
-            vol.Required(
-                OPTION_OUTGOING,
-                default=data.get(OPTION_OUTGOING, True),
-            ): cv.boolean,
-            vol.Required(
-                OPTION_FORWARDS,
-                default=data.get(OPTION_FORWARDS),
-            ): vol.In(FORWARDS_OPTIONS),
-            vol.Required(
-                OPTION_BLACKLIST_CHATS,
-                default=data.get(OPTION_BLACKLIST_CHATS, False),
-            ): cv.boolean,
+                OPTION_CHAT_FILTER_MODE,
+                default=data.get(OPTION_CHAT_FILTER_MODE, CHAT_FILTER_MODE_MANUAL_WHITELIST),
+            ): vol.In(CHAT_FILTER_MODES),
+            vol.Optional(OPTION_CHATS, description={KEY_SUGGESTED_VALUE: data.get(OPTION_CHATS, "")}): cv.string,
             vol.Optional(
-                OPTION_CHATS,
-                description={KEY_SUGGESTED_VALUE: data.get(OPTION_CHATS, "")},
-            ): cv.string,
+                OPTION_TELEGRAM_FOLDER_ID,
+                description={KEY_SUGGESTED_VALUE: data.get(OPTION_TELEGRAM_FOLDER_ID, "")},
+            ): telegram_folder_field,
             vol.Optional(
-                OPTION_FROM_USERS,
-                description={KEY_SUGGESTED_VALUE: data.get(OPTION_FROM_USERS, "")},
-            ): cv.string,
-            vol.Optional(
-                OPTION_PATTERN,
-                description={KEY_SUGGESTED_VALUE: data.get(OPTION_PATTERN, "")},
-            ): cv.string,
+                OPTION_FOLDER_REFRESH_INTERVAL,
+                default=data.get(OPTION_FOLDER_REFRESH_INTERVAL, DEFAULT_FOLDER_REFRESH_INTERVAL),
+            ): cv.positive_int,
+            vol.Optional(OPTION_FROM_USERS, description={KEY_SUGGESTED_VALUE: data.get(OPTION_FROM_USERS, "")}): cv.string,
+            vol.Optional(OPTION_PATTERN, description={KEY_SUGGESTED_VALUE: data.get(OPTION_PATTERN, "")}): cv.string,
         }
     )
 
@@ -197,34 +200,13 @@ def step_message_edited_data_schema(data):
     """Handle message edited step data validation."""
     return vol.Schema(
         {
-            vol.Required(
-                OPTION_INCOMING,
-                default=data.get(OPTION_INCOMING, True),
-            ): cv.boolean,
-            vol.Required(
-                OPTION_OUTGOING,
-                default=data.get(OPTION_OUTGOING, True),
-            ): cv.boolean,
-            vol.Required(
-                OPTION_FORWARDS,
-                default=data.get(OPTION_FORWARDS),
-            ): vol.In(FORWARDS_OPTIONS),
-            vol.Required(
-                OPTION_BLACKLIST_CHATS,
-                default=data.get(OPTION_BLACKLIST_CHATS, False),
-            ): cv.boolean,
-            vol.Optional(
-                OPTION_CHATS,
-                description={KEY_SUGGESTED_VALUE: data.get(OPTION_CHATS, "")},
-            ): cv.string,
-            vol.Optional(
-                OPTION_FROM_USERS,
-                description={KEY_SUGGESTED_VALUE: data.get(OPTION_FROM_USERS, "")},
-            ): cv.string,
-            vol.Optional(
-                OPTION_PATTERN,
-                description={KEY_SUGGESTED_VALUE: data.get(OPTION_PATTERN, "")},
-            ): cv.string,
+            vol.Required(OPTION_INCOMING, default=data.get(OPTION_INCOMING, True)): cv.boolean,
+            vol.Required(OPTION_OUTGOING, default=data.get(OPTION_OUTGOING, True)): cv.boolean,
+            vol.Required(OPTION_FORWARDS, default=data.get(OPTION_FORWARDS)): vol.In(FORWARDS_OPTIONS),
+            vol.Required(OPTION_BLACKLIST_CHATS, default=data.get(OPTION_BLACKLIST_CHATS, False)): cv.boolean,
+            vol.Optional(OPTION_CHATS, description={KEY_SUGGESTED_VALUE: data.get(OPTION_CHATS, "")}): cv.string,
+            vol.Optional(OPTION_FROM_USERS, description={KEY_SUGGESTED_VALUE: data.get(OPTION_FROM_USERS, "")}): cv.string,
+            vol.Optional(OPTION_PATTERN, description={KEY_SUGGESTED_VALUE: data.get(OPTION_PATTERN, "")}): cv.string,
         }
     )
 
@@ -233,18 +215,9 @@ def step_message_read_data_schema(data):
     """Handle message read step data validation."""
     return vol.Schema(
         {
-            vol.Required(
-                OPTION_INBOX,
-                default=data.get(OPTION_INBOX, False),
-            ): cv.boolean,
-            vol.Required(
-                OPTION_BLACKLIST_CHATS,
-                default=data.get(OPTION_BLACKLIST_CHATS, False),
-            ): cv.boolean,
-            vol.Optional(
-                OPTION_CHATS,
-                description={KEY_SUGGESTED_VALUE: data.get(OPTION_CHATS, "")},
-            ): cv.string,
+            vol.Required(OPTION_INBOX, default=data.get(OPTION_INBOX, False)): cv.boolean,
+            vol.Required(OPTION_BLACKLIST_CHATS, default=data.get(OPTION_BLACKLIST_CHATS, False)): cv.boolean,
+            vol.Optional(OPTION_CHATS, description={KEY_SUGGESTED_VALUE: data.get(OPTION_CHATS, "")}): cv.string,
         }
     )
 
@@ -253,14 +226,8 @@ def step_message_deleted_data_schema(data):
     """Handle message deleted step data validation."""
     return vol.Schema(
         {
-            vol.Required(
-                OPTION_BLACKLIST_CHATS,
-                default=data.get(OPTION_BLACKLIST_CHATS, False),
-            ): cv.boolean,
-            vol.Optional(
-                OPTION_CHATS,
-                description={KEY_SUGGESTED_VALUE: data.get(OPTION_CHATS, "")},
-            ): cv.string,
+            vol.Required(OPTION_BLACKLIST_CHATS, default=data.get(OPTION_BLACKLIST_CHATS, False)): cv.boolean,
+            vol.Optional(OPTION_CHATS, description={KEY_SUGGESTED_VALUE: data.get(OPTION_CHATS, "")}): cv.string,
         }
     )
 
@@ -269,22 +236,10 @@ def step_callback_query_data_schema(data):
     """Handle callback query step data validation."""
     return vol.Schema(
         {
-            vol.Required(
-                OPTION_BLACKLIST_CHATS,
-                default=data.get(OPTION_BLACKLIST_CHATS, False),
-            ): cv.boolean,
-            vol.Optional(
-                OPTION_CHATS,
-                description={KEY_SUGGESTED_VALUE: data.get(OPTION_CHATS, "")},
-            ): cv.string,
-            vol.Optional(
-                OPTION_DATA,
-                description={KEY_SUGGESTED_VALUE: data.get(OPTION_DATA, "")},
-            ): cv.string,
-            vol.Optional(
-                OPTION_PATTERN,
-                description={KEY_SUGGESTED_VALUE: data.get(OPTION_PATTERN, "")},
-            ): cv.string,
+            vol.Required(OPTION_BLACKLIST_CHATS, default=data.get(OPTION_BLACKLIST_CHATS, False)): cv.boolean,
+            vol.Optional(OPTION_CHATS, description={KEY_SUGGESTED_VALUE: data.get(OPTION_CHATS, "")}): cv.string,
+            vol.Optional(OPTION_DATA, description={KEY_SUGGESTED_VALUE: data.get(OPTION_DATA, "")}): cv.string,
+            vol.Optional(OPTION_PATTERN, description={KEY_SUGGESTED_VALUE: data.get(OPTION_PATTERN, "")}): cv.string,
         }
     )
 
@@ -293,18 +248,9 @@ def step_inline_query_data_schema(data):
     """Handle inline query step data validation."""
     return vol.Schema(
         {
-            vol.Required(
-                OPTION_BLACKLIST_USERS,
-                default=data.get(OPTION_BLACKLIST_USERS, False),
-            ): cv.boolean,
-            vol.Optional(
-                OPTION_USERS,
-                description={KEY_SUGGESTED_VALUE: data.get(OPTION_USERS, "")},
-            ): cv.string,
-            vol.Optional(
-                OPTION_PATTERN,
-                description={KEY_SUGGESTED_VALUE: data.get(OPTION_PATTERN, "")},
-            ): cv.string,
+            vol.Required(OPTION_BLACKLIST_USERS, default=data.get(OPTION_BLACKLIST_USERS, False)): cv.boolean,
+            vol.Optional(OPTION_USERS, description={KEY_SUGGESTED_VALUE: data.get(OPTION_USERS, "")}): cv.string,
+            vol.Optional(OPTION_PATTERN, description={KEY_SUGGESTED_VALUE: data.get(OPTION_PATTERN, "")}): cv.string,
         }
     )
 
@@ -313,14 +259,8 @@ def step_chat_action_data_schema(data):
     """Handle chat action step data validation."""
     return vol.Schema(
         {
-            vol.Required(
-                OPTION_BLACKLIST_CHATS,
-                default=data.get(OPTION_BLACKLIST_CHATS, False),
-            ): cv.boolean,
-            vol.Optional(
-                OPTION_CHATS,
-                description={KEY_SUGGESTED_VALUE: data.get(OPTION_CHATS, "")},
-            ): cv.string,
+            vol.Required(OPTION_BLACKLIST_CHATS, default=data.get(OPTION_BLACKLIST_CHATS, False)): cv.boolean,
+            vol.Optional(OPTION_CHATS, description={KEY_SUGGESTED_VALUE: data.get(OPTION_CHATS, "")}): cv.string,
         }
     )
 
@@ -329,14 +269,8 @@ def step_user_update_data_schema(data):
     """Handle user update step data validation."""
     return vol.Schema(
         {
-            vol.Required(
-                OPTION_BLACKLIST_CHATS,
-                default=data.get(OPTION_BLACKLIST_CHATS, False),
-            ): cv.boolean,
-            vol.Optional(
-                OPTION_CHATS,
-                description={KEY_SUGGESTED_VALUE: data.get(OPTION_CHATS, "")},
-            ): cv.string,
+            vol.Required(OPTION_BLACKLIST_CHATS, default=data.get(OPTION_BLACKLIST_CHATS, False)): cv.boolean,
+            vol.Optional(OPTION_CHATS, description={KEY_SUGGESTED_VALUE: data.get(OPTION_CHATS, "")}): cv.string,
         }
     )
 

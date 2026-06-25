@@ -26,6 +26,7 @@ from .const import (
     SERVICE_EDIT_MESSAGE,
     SERVICE_SEND_MESSAGES,
 )
+from .chat_filters import migrate_chat_filter_options
 from .coordinator import TelegramClientCoordinator, TelegramClientEntryConfigEntry
 from .schemas import (
     SERVICE_DELETE_MESSAGES_SCHEMA,
@@ -81,6 +82,13 @@ async def async_setup_entry(
                 },
             },
         )
+    if EVENT_NEW_MESSAGE in entry.options:
+        new_message_options = migrate_chat_filter_options(entry.options.get(EVENT_NEW_MESSAGE, {}))
+        if new_message_options != entry.options.get(EVENT_NEW_MESSAGE, {}):
+            options = dict(entry.options)
+            options[EVENT_NEW_MESSAGE] = new_message_options
+            hass.config_entries.async_update_entry(entry, options=options)
+
     coordinator = TelegramClientCoordinator(hass, entry)
     await coordinator.async_client_start()
     entry.runtime_data = coordinator
