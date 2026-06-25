@@ -8,7 +8,7 @@ The `telegram_client` integration uses [Telethon library](https://docs.telethon.
 Preferable way to install this custom integration is to use [HACS](https://www.hacs.xyz/). Learn how to install HACS [here](https://www.hacs.xyz/docs/use/download/download).
 After you have successfully installed and configured HACS you can simply press this button to add this repository to HACS and proceed to `Telegram client` installation.
 
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=lufton&repository=ha_telegram_client&category=integration)
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=dyamirana&repository=ha_telegram_client&category=integration)
 
 ### Manual installation
 
