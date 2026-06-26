@@ -300,7 +300,7 @@ The stable Home Assistant event type for new messages is:
 telegram_client_new_message
 ```
 
-The event payload includes normalized fields such as `chat_id`, `chat_title`, `sender_id`, `sender_username`, `sender_first_name`, `sender_last_name`, `message_id`, `message`, `raw_text`, `date`, `is_group`, `is_channel`, `is_private`, `outgoing`, `forward`, and, for folder-filtered messages, `folder_id` / `folder_name`.
+The event payload includes normalized fields such as `chat_id`, `chat_title`, `sender_id`, `sender_username`, `sender_first_name`, `sender_last_name`, `message_id`, `message`, `raw_text`, `date`, `is_group`, `is_channel`, `is_private`, `outgoing`, `forward`, `notification_enabled` (derived from Telegram's silent-message flag), and, for folder-filtered messages, `folder_id` / `folder_name`.
 
 ### Automation UI trigger
 
