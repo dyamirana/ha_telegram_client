@@ -56,74 +56,23 @@ async def get_folder_chat_ids(client: Any, folder_id: int) -> set[int]:
     dialogs: AsyncIterable[Any] = client.iter_dialogs(folder=folder_id)
     async for dialog in dialogs:
         chat_ids.add(int(dialog.id))
-    if chat_ids:
-        return chat_ids
-
-    # Some Telegram accounts/Telethon combinations expose the folder metadata
-    # through GetDialogFiltersRequest but do not return dialogs for custom
-    # folders via iter_dialogs(folder=...). Use explicit peers from the folder
-    # definition as a best-effort fallback so folder filtering is not empty.
-    folder = await _get_telegram_dialog_filter(client, folder_id)
-    if folder is None:
-        return chat_ids
-    return await _get_dialog_filter_explicit_chat_ids(client, folder)
+    return chat_ids
 
 
 async def get_telegram_folder_options(client: Any) -> dict[str, str]:
     """Return Telegram folder IDs and titles suitable for an options dropdown."""
+    from telethon.tl.functions.messages import GetDialogFiltersRequest
+
     folders: dict[str, str] = {}
-    response = await _get_telegram_dialog_filters_response(client)
-    for dialog_filter in _iter_telegram_dialog_filters(response):
+    response = await client(GetDialogFiltersRequest())
+    filters = getattr(response, "filters", response)
+    for dialog_filter in filters:
         folder_id = getattr(dialog_filter, "id", None)
         title = _telegram_folder_title(dialog_filter)
         if folder_id in (None, 0) or not title:
             continue
         folders[str(folder_id)] = f"{title} ({folder_id})"
     return folders
-
-
-async def _get_telegram_dialog_filters_response(client: Any) -> Any:
-    """Load raw Telegram dialog filters response."""
-    from telethon.tl.functions.messages import GetDialogFiltersRequest
-
-    return await client(GetDialogFiltersRequest())
-
-
-async def _get_telegram_dialog_filter(client: Any, folder_id: int) -> Any | None:
-    """Return a single Telegram dialog filter by ID."""
-    response = await _get_telegram_dialog_filters_response(client)
-    for dialog_filter in _iter_telegram_dialog_filters(response):
-        if getattr(dialog_filter, "id", None) == folder_id:
-            return dialog_filter
-    return None
-
-
-def _iter_telegram_dialog_filters(response: Any):
-    """Iterate dialog filters from Telethon response variants."""
-    filters = getattr(response, "filters", None)
-    if filters is not None:
-        yield from filters
-        return
-    yield from response
-
-
-async def _get_dialog_filter_explicit_chat_ids(client: Any, dialog_filter: Any) -> set[int]:
-    """Resolve explicit peers configured in a Telegram dialog filter."""
-    from telethon import utils
-
-    chat_ids: set[int] = set()
-    peers = [
-        *getattr(dialog_filter, "include_peers", []),
-        *getattr(dialog_filter, "pinned_peers", []),
-    ]
-    for peer in peers:
-        try:
-            entity = await client.get_entity(peer)
-        except Exception as err:  # noqa: BLE001
-            LOGGER.debug("Unable to resolve Telegram folder peer %s", peer, exc_info=err)
-            continue
-        chat_ids.add(utils.get_peer_id(entity))
-    return chat_ids
 
 
 def _telegram_folder_title(dialog_filter: Any) -> str | None:
