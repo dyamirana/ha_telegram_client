@@ -133,3 +133,43 @@ def test_get_telegram_folder_options_from_dialog_filters_response(monkeypatch):
     assert asyncio.run(get_telegram_folder_options(Client())) == {
         "4": "Security (4)",
     }
+
+
+def test_folder_chat_id_loading_falls_back_to_dialog_filter_peers(monkeypatch, caplog):
+    import sys
+    import types
+
+    class GetDialogFiltersRequest:
+        pass
+
+    telethon = types.ModuleType("telethon")
+    telethon.utils = SimpleNamespace(get_peer_id=lambda peer: peer.marked_id)
+    tl = types.ModuleType("telethon.tl")
+    functions = types.ModuleType("telethon.tl.functions")
+    messages = types.ModuleType("telethon.tl.functions.messages")
+    messages.GetDialogFiltersRequest = GetDialogFiltersRequest
+    monkeypatch.setitem(sys.modules, "telethon", telethon)
+    monkeypatch.setitem(sys.modules, "telethon.tl", tl)
+    monkeypatch.setitem(sys.modules, "telethon.tl.functions", functions)
+    monkeypatch.setitem(sys.modules, "telethon.tl.functions.messages", messages)
+
+    class Client:
+        async def iter_dialogs(self, folder):
+            raise FolderIdInvalidError("invalid folder")
+            yield
+
+        async def __call__(self, request):
+            assert isinstance(request, GetDialogFiltersRequest)
+            return SimpleNamespace(
+                filters=[
+                    SimpleNamespace(id=201, include_peers=[]),
+                    SimpleNamespace(
+                        id=202,
+                        include_peers=[SimpleNamespace(marked_id=1)],
+                        pinned_peers=[SimpleNamespace(marked_id=-1001234567890)],
+                    ),
+                ]
+            )
+
+    assert asyncio.run(get_folder_chat_ids(Client(), 202)) == {1, -1001234567890}
+    assert "Telegram folder 202 is not valid" not in caplog.text

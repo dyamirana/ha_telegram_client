@@ -131,9 +131,7 @@ def _is_folder_id_invalid_error(err: Exception) -> bool:
 async def get_telegram_folder_options(client: Any) -> dict[str, str]:
     """Return Telegram folder IDs and titles suitable for an options dropdown."""
     folders: dict[str, str] = {}
-    response = await client(GetDialogFiltersRequest())
-    filters = getattr(response, "filters", response)
-    for dialog_filter in filters:
+    for dialog_filter in await _get_telegram_dialog_filters(client):
         folder_id = getattr(dialog_filter, "id", None)
         title = _telegram_folder_title(dialog_filter)
         if folder_id in (None, 0) or not title:
