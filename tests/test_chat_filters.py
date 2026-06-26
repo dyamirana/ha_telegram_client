@@ -56,7 +56,7 @@ def test_folder_chat_id_loading():
     assert asyncio.run(get_folder_chat_ids(_Client(), 7)) == {1, -1001234567890}
 
 
-def test_get_telegram_folder_options(monkeypatch):
+def test_get_telegram_folder_options_from_iterable_response(monkeypatch):
     import sys
     import types
 
@@ -86,3 +86,73 @@ def test_get_telegram_folder_options(monkeypatch):
         "2": "Home Assistant (2)",
         "3": "Alerts (3)",
     }
+
+
+def test_get_telegram_folder_options_from_dialog_filters_response(monkeypatch):
+    import sys
+    import types
+
+    class GetDialogFiltersRequest:
+        pass
+
+    telethon = types.ModuleType("telethon")
+    tl = types.ModuleType("telethon.tl")
+    functions = types.ModuleType("telethon.tl.functions")
+    messages = types.ModuleType("telethon.tl.functions.messages")
+    messages.GetDialogFiltersRequest = GetDialogFiltersRequest
+    monkeypatch.setitem(sys.modules, "telethon", telethon)
+    monkeypatch.setitem(sys.modules, "telethon.tl", tl)
+    monkeypatch.setitem(sys.modules, "telethon.tl.functions", functions)
+    monkeypatch.setitem(sys.modules, "telethon.tl.functions.messages", messages)
+
+    class Client:
+        async def __call__(self, request):
+            assert isinstance(request, GetDialogFiltersRequest)
+            return SimpleNamespace(
+                filters=[
+                    SimpleNamespace(id=0, title="Default"),
+                    SimpleNamespace(id=4, title="Security"),
+                ]
+            )
+
+    assert asyncio.run(get_telegram_folder_options(Client())) == {
+        "4": "Security (4)",
+    }
+
+
+def test_folder_chat_id_loading_falls_back_to_explicit_filter_peers(monkeypatch):
+    import sys
+    import types
+
+    class GetDialogFiltersRequest:
+        pass
+
+    telethon = types.ModuleType("telethon")
+    tl = types.ModuleType("telethon.tl")
+    functions = types.ModuleType("telethon.tl.functions")
+    messages = types.ModuleType("telethon.tl.functions.messages")
+    messages.GetDialogFiltersRequest = GetDialogFiltersRequest
+    telethon.utils = SimpleNamespace(get_peer_id=lambda entity: entity.id)
+    monkeypatch.setitem(sys.modules, "telethon", telethon)
+    monkeypatch.setitem(sys.modules, "telethon.tl", tl)
+    monkeypatch.setitem(sys.modules, "telethon.tl.functions", functions)
+    monkeypatch.setitem(sys.modules, "telethon.tl.functions.messages", messages)
+
+    class Client:
+        async def iter_dialogs(self, folder):
+            assert folder == 9
+            if False:
+                yield None
+
+        async def __call__(self, request):
+            assert isinstance(request, GetDialogFiltersRequest)
+            return SimpleNamespace(
+                filters=[
+                    SimpleNamespace(id=9, include_peers=["chat-a"], pinned_peers=["chat-b"]),
+                ]
+            )
+
+        async def get_entity(self, peer):
+            return SimpleNamespace(id={"chat-a": 111, "chat-b": -100222}[peer])
+
+    assert asyncio.run(get_folder_chat_ids(Client(), 9)) == {111, -100222}
