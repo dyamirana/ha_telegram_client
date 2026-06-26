@@ -41,10 +41,10 @@ async def test_folder_filter_skips_non_folder_chat():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("silent", "expected"),
-    [(False, True), (True, False), (None, None)],
+    ("silent", "original_silent", "expected"),
+    [(False, None, True), (True, None, False), (None, True, False), (None, None, None)],
 )
-async def test_new_message_payload_includes_notification_enabled(silent, expected):
+async def test_new_message_payload_includes_notification_enabled(silent, original_silent, expected):
     coordinator = SimpleNamespace(
         _entry=SimpleNamespace(entry_id="entry-1", options={}),
         data={"id": 42},
@@ -59,6 +59,7 @@ async def test_new_message_payload_includes_notification_enabled(silent, expecte
     event = SimpleNamespace(
         chat_id=123,
         message=SimpleNamespace(id=10, silent=silent, date=None, fwd_from=None),
+        original_update=SimpleNamespace(message=SimpleNamespace(silent=original_silent)),
         raw_text="hello",
         out=False,
         get_chat=get_chat,
