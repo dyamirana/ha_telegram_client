@@ -160,6 +160,24 @@ from .chat_filters import get_folder_chat_ids, get_folder_id, get_manual_chat_fi
 type TelegramClientEntryConfigEntry = ConfigEntry[TelegramClientCoordinator]
 
 
+def _get_message_silent(event: Any) -> bool | None:
+    """Return Telegram's silent-message flag from Telethon event variants."""
+    for source in (
+        getattr(event, "message", None),
+        getattr(getattr(event, "original_update", None), "message", None),
+        getattr(event, "original_update", None),
+    ):
+        silent = getattr(source, "silent", None)
+        if silent is not None:
+            return bool(silent)
+        to_dict = getattr(source, "to_dict", None)
+        if callable(to_dict):
+            silent = to_dict().get("silent")
+            if silent is not None:
+                return bool(silent)
+    return None
+
+
 class TelegramClientCoordinator(DataUpdateCoordinator):
     """Telegram client data update coordinator."""
 
@@ -211,6 +229,7 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
         hass.data.setdefault(DOMAIN, {})
         hass.data[DOMAIN][entry.entry_id] = self
         self._folder_chat_ids: set[int] = set()
+        self._folder_refresh_task: asyncio.Task | None = None
         self._folder_refresh_unsub = None
         self._subscribe_listeners(entry)
 
@@ -291,7 +310,7 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
         chat = await event.get_chat() if hasattr(event, "get_chat") else None
         sender = await event.get_sender() if hasattr(event, "get_sender") else None
         message = getattr(event, "message", None)
-        message_silent = getattr(message, "silent", None)
+        message_silent = _get_message_silent(event)
         notification_enabled = None if message_silent is None else not message_silent
         data.update(
             {
@@ -756,7 +775,7 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
     def _schedule_folder_refresh(self, options: dict[str, Any]) -> None:
         """Schedule Telegram folder chat cache refresh."""
         interval = int(options.get(OPTION_FOLDER_REFRESH_INTERVAL) or DEFAULT_FOLDER_REFRESH_INTERVAL)
-        self._queue_folder_refresh(options)
+        self._hass.loop.call_soon(self._queue_folder_refresh, options)
         self._folder_refresh_unsub = async_track_time_interval(
             self._hass,
             lambda now: self._queue_folder_refresh(options),
@@ -765,7 +784,13 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
 
     def _queue_folder_refresh(self, options: dict[str, Any]) -> None:
         """Queue Telegram folder chat cache refresh from any thread."""
-        self._hass.add_job(self._refresh_folder_chat_ids, options)
+        if self._folder_refresh_task and not self._folder_refresh_task.done():
+            LOGGER.debug("Telegram folder chat cache refresh is already running")
+            return
+        self._folder_refresh_task = self._hass.async_create_task(
+            self._refresh_folder_chat_ids(options),
+            "telegram_client_folder_chat_ids_refresh",
+        )
 
     async def _refresh_folder_chat_ids(self, options: dict[str, Any]) -> None:
         """Refresh cached chat IDs for Telegram folder filtering."""
@@ -774,7 +799,11 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
             return
         try:
             await self.async_client_start()
-            chat_ids = await get_folder_chat_ids(self._client, folder_id)
+            async with asyncio.timeout(10):
+                chat_ids = await get_folder_chat_ids(self._client, folder_id)
+        except TimeoutError:
+            LOGGER.warning("Timed out refreshing Telegram folder %s chats", folder_id)
+            return
         except (ConnectionError, ConfigEntryAuthFailed) as err:
             LOGGER.warning(
                 "Unable to refresh Telegram folder %s chats: %s", folder_id, err
@@ -790,6 +819,9 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
         if self._folder_refresh_unsub:
             self._folder_refresh_unsub()
             self._folder_refresh_unsub = None
+        if self._folder_refresh_task:
+            self._folder_refresh_task.cancel()
+            self._folder_refresh_task = None
         self._client.remove_event_handler(self.on_new_message, events.NewMessage)
         self._client.remove_event_handler(self.on_message_edited, events.MessageEdited)
         self._client.remove_event_handler(self.on_message_read, events.MessageRead)
