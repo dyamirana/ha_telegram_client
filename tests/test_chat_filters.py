@@ -56,6 +56,21 @@ def test_folder_chat_id_loading():
     assert asyncio.run(get_folder_chat_ids(_Client(), 7)) == {1, -1001234567890}
 
 
+class FolderIdInvalidError(Exception):
+    """Test double for Telethon's FolderIdInvalidError."""
+
+
+class _InvalidFolderClient:
+    async def iter_dialogs(self, folder):
+        raise FolderIdInvalidError("invalid folder")
+        yield
+
+
+def test_folder_chat_id_loading_returns_empty_set_for_invalid_folder(caplog):
+    assert asyncio.run(get_folder_chat_ids(_InvalidFolderClient(), 99)) == set()
+    assert "Telegram folder 99 is not valid" in caplog.text
+
+
 def test_get_telegram_folder_options_from_iterable_response(monkeypatch):
     import sys
     import types

@@ -54,9 +54,22 @@ async def get_folder_chat_ids(client: Any, folder_id: int) -> set[int]:
     """Load Telegram dialog IDs from a folder."""
     chat_ids: set[int] = set()
     dialogs: AsyncIterable[Any] = client.iter_dialogs(folder=folder_id)
-    async for dialog in dialogs:
-        chat_ids.add(int(dialog.id))
+    try:
+        async for dialog in dialogs:
+            chat_ids.add(int(dialog.id))
+    except Exception as err:
+        if not _is_folder_id_invalid_error(err):
+            raise
+        LOGGER.warning(
+            "Telegram folder %s is not valid; clear or re-select the folder in the integration options",
+            folder_id,
+        )
     return chat_ids
+
+
+def _is_folder_id_invalid_error(err: Exception) -> bool:
+    """Return whether err is Telethon's FolderIdInvalidError."""
+    return type(err).__name__ == "FolderIdInvalidError"
 
 
 async def get_telegram_folder_options(client: Any) -> dict[str, str]:
