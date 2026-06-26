@@ -94,6 +94,7 @@ from .const import (
     KEY_NEW_PIN,
     KEY_NEW_SCORE,
     KEY_NEW_TITLE,
+    KEY_NOTIFICATION_ENABLED,
     KEY_OFFSET,
     KEY_ONLINE,
     KEY_OUTBOX,
@@ -290,6 +291,8 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
         chat = await event.get_chat() if hasattr(event, "get_chat") else None
         sender = await event.get_sender() if hasattr(event, "get_sender") else None
         message = getattr(event, "message", None)
+        message_silent = getattr(message, "silent", None)
+        notification_enabled = None if message_silent is None else not message_silent
         data.update(
             {
                 KEY_CHAT_TITLE: getattr(chat, "title", None) or getattr(chat, "first_name", None),
@@ -300,6 +303,7 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
                 KEY_MESSAGE_ID: getattr(message, "id", None),
                 KEY_MESSAGE: getattr(event, "raw_text", None),
                 KEY_RAW_TEXT: getattr(event, "raw_text", None),
+                KEY_NOTIFICATION_ENABLED: notification_enabled,
                 "date": getattr(getattr(message, "date", None), "isoformat", lambda: None)(),
                 OPTION_OUTGOING: getattr(event, "out", None),
                 KEY_FORWARD: getattr(message, "fwd_from", None) is not None,
