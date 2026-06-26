@@ -226,6 +226,7 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
             entry.data.get(CONF_API_HASH),
             **CLIENT_PARAMS,
         )
+        self._updates_recovery_lock = asyncio.Lock()
         hass.data.setdefault(DOMAIN, {})
         hass.data[DOMAIN][entry.entry_id] = self
         self._folder_chat_ids: set[int] = set()
@@ -620,6 +621,7 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
                     f"User is not authorized for {self._unique_id}"
                 )
             async with asyncio.timeout(10):
+                await self._async_recover_updates_delivery()
                 result = await coro
                 if result is None:
                     raise ConfigEntryNotReady(
@@ -638,8 +640,33 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
         except ConnectionError as err:
             raise IntegrationError("API call failed") from err
 
+    async def _async_recover_updates_delivery(self) -> None:
+        """Resume Telegram update delivery and fetch missed events if possible."""
+        if not self._entry.options.get(OPTION_EVENTS):
+            return
+        if self._updates_recovery_lock.locked():
+            return
+        async with self._updates_recovery_lock:
+            set_receive_updates = getattr(self._client, "set_receive_updates", None)
+            if callable(set_receive_updates):
+                await set_receive_updates(True)
+            catch_up = getattr(self._client, "catch_up", None)
+            if callable(catch_up):
+                await catch_up()
+
+    def _client_disconnected_future_done(self) -> bool:
+        """Return whether Telethon's disconnect future has already completed."""
+        disconnected = getattr(self._client, "disconnected", None)
+        return bool(getattr(disconnected, "done", lambda: False)())
+
     async def async_client_start(self):
         """Handle Telegram client start."""
+        if self._client.is_connected() and self._client_disconnected_future_done():
+            LOGGER.warning(
+                "Telegram client %s reports a completed disconnect future; reconnecting",
+                self._unique_id,
+            )
+            await self._client.disconnect()
         if not self._client.is_connected():
             try:
                 if self._entry.data[CONF_CLIENT_TYPE] == CLIENT_TYPE_USER:
