@@ -94,6 +94,7 @@ from .const import (
     KEY_NEW_PIN,
     KEY_NEW_SCORE,
     KEY_NEW_TITLE,
+    KEY_NOTIFICATION_ENABLED,
     KEY_OFFSET,
     KEY_ONLINE,
     KEY_OUTBOX,
@@ -159,6 +160,24 @@ from .chat_filters import get_folder_chat_ids, get_folder_id, get_manual_chat_fi
 type TelegramClientEntryConfigEntry = ConfigEntry[TelegramClientCoordinator]
 
 
+def _get_message_silent(event: Any) -> bool | None:
+    """Return Telegram's silent-message flag from Telethon event variants."""
+    for source in (
+        getattr(event, "message", None),
+        getattr(getattr(event, "original_update", None), "message", None),
+        getattr(event, "original_update", None),
+    ):
+        silent = getattr(source, "silent", None)
+        if silent is not None:
+            return bool(silent)
+        to_dict = getattr(source, "to_dict", None)
+        if callable(to_dict):
+            silent = to_dict().get("silent")
+            if silent is not None:
+                return bool(silent)
+    return None
+
+
 class TelegramClientCoordinator(DataUpdateCoordinator):
     """Telegram client data update coordinator."""
 
@@ -207,9 +226,11 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
             entry.data.get(CONF_API_HASH),
             **CLIENT_PARAMS,
         )
+        self._updates_recovery_lock = asyncio.Lock()
         hass.data.setdefault(DOMAIN, {})
         hass.data[DOMAIN][entry.entry_id] = self
         self._folder_chat_ids: set[int] = set()
+        self._folder_refresh_task: asyncio.Task | None = None
         self._folder_refresh_unsub = None
         self._subscribe_listeners(entry)
 
@@ -290,6 +311,8 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
         chat = await event.get_chat() if hasattr(event, "get_chat") else None
         sender = await event.get_sender() if hasattr(event, "get_sender") else None
         message = getattr(event, "message", None)
+        message_silent = _get_message_silent(event)
+        notification_enabled = None if message_silent is None else not message_silent
         data.update(
             {
                 KEY_CHAT_TITLE: getattr(chat, "title", None) or getattr(chat, "first_name", None),
@@ -300,6 +323,7 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
                 KEY_MESSAGE_ID: getattr(message, "id", None),
                 KEY_MESSAGE: getattr(event, "raw_text", None),
                 KEY_RAW_TEXT: getattr(event, "raw_text", None),
+                KEY_NOTIFICATION_ENABLED: notification_enabled,
                 "date": getattr(getattr(message, "date", None), "isoformat", lambda: None)(),
                 OPTION_OUTGOING: getattr(event, "out", None),
                 KEY_FORWARD: getattr(message, "fwd_from", None) is not None,
@@ -597,6 +621,7 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
                     f"User is not authorized for {self._unique_id}"
                 )
             async with asyncio.timeout(10):
+                await self._async_recover_updates_delivery()
                 result = await coro
                 if result is None:
                     raise ConfigEntryNotReady(
@@ -615,8 +640,33 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
         except ConnectionError as err:
             raise IntegrationError("API call failed") from err
 
+    async def _async_recover_updates_delivery(self) -> None:
+        """Resume Telegram update delivery and fetch missed events if possible."""
+        if not self._entry.options.get(OPTION_EVENTS):
+            return
+        if self._updates_recovery_lock.locked():
+            return
+        async with self._updates_recovery_lock:
+            set_receive_updates = getattr(self._client, "set_receive_updates", None)
+            if callable(set_receive_updates):
+                await set_receive_updates(True)
+            catch_up = getattr(self._client, "catch_up", None)
+            if callable(catch_up):
+                await catch_up()
+
+    def _client_disconnected_future_done(self) -> bool:
+        """Return whether Telethon's disconnect future has already completed."""
+        disconnected = getattr(self._client, "disconnected", None)
+        return bool(getattr(disconnected, "done", lambda: False)())
+
     async def async_client_start(self):
         """Handle Telegram client start."""
+        if self._client.is_connected() and self._client_disconnected_future_done():
+            LOGGER.warning(
+                "Telegram client %s reports a completed disconnect future; reconnecting",
+                self._unique_id,
+            )
+            await self._client.disconnect()
         if not self._client.is_connected():
             try:
                 if self._entry.data[CONF_CLIENT_TYPE] == CLIENT_TYPE_USER:
@@ -752,11 +802,21 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
     def _schedule_folder_refresh(self, options: dict[str, Any]) -> None:
         """Schedule Telegram folder chat cache refresh."""
         interval = int(options.get(OPTION_FOLDER_REFRESH_INTERVAL) or DEFAULT_FOLDER_REFRESH_INTERVAL)
-        self._hass.async_create_task(self._refresh_folder_chat_ids(options))
+        self._hass.loop.call_soon(self._queue_folder_refresh, options)
         self._folder_refresh_unsub = async_track_time_interval(
             self._hass,
-            lambda now: self._hass.async_create_task(self._refresh_folder_chat_ids(options)),
+            lambda now: self._queue_folder_refresh(options),
             timedelta(seconds=interval),
+        )
+
+    def _queue_folder_refresh(self, options: dict[str, Any]) -> None:
+        """Queue Telegram folder chat cache refresh from any thread."""
+        if self._folder_refresh_task and not self._folder_refresh_task.done():
+            LOGGER.debug("Telegram folder chat cache refresh is already running")
+            return
+        self._folder_refresh_task = self._hass.async_create_task(
+            self._refresh_folder_chat_ids(options),
+            "telegram_client_folder_chat_ids_refresh",
         )
 
     async def _refresh_folder_chat_ids(self, options: dict[str, Any]) -> None:
@@ -764,7 +824,18 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
         folder_id = get_folder_id(options)
         if folder_id is None:
             return
-        chat_ids = await get_folder_chat_ids(self._client, folder_id)
+        try:
+            await self.async_client_start()
+            async with asyncio.timeout(10):
+                chat_ids = await get_folder_chat_ids(self._client, folder_id)
+        except TimeoutError:
+            LOGGER.warning("Timed out refreshing Telegram folder %s chats", folder_id)
+            return
+        except (ConnectionError, ConfigEntryAuthFailed) as err:
+            LOGGER.warning(
+                "Unable to refresh Telegram folder %s chats: %s", folder_id, err
+            )
+            return
         self._folder_chat_ids = chat_ids
         LOGGER.debug("Loaded %s chats from Telegram folder %s: %s", len(chat_ids), folder_id, sorted(chat_ids))
         if not chat_ids:
@@ -775,6 +846,9 @@ class TelegramClientCoordinator(DataUpdateCoordinator):
         if self._folder_refresh_unsub:
             self._folder_refresh_unsub()
             self._folder_refresh_unsub = None
+        if self._folder_refresh_task:
+            self._folder_refresh_task.cancel()
+            self._folder_refresh_task = None
         self._client.remove_event_handler(self.on_new_message, events.NewMessage)
         self._client.remove_event_handler(self.on_message_edited, events.MessageEdited)
         self._client.remove_event_handler(self.on_message_read, events.MessageRead)
